@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_shortenDynamicElementInTuple:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub shortenDynamicElementInTuple
 	int 1
@@ -23,12 +26,8 @@ shortenDynamicElementInTuple:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x0006 // initial head offset
-	int 1
-	itob
-	extract 6 0
-	int 2
-	itob
-	extract 6 0
+	byte 0x0001
+	byte 0x0002
 	concat
 	dup
 	len
@@ -39,12 +38,8 @@ shortenDynamicElementInTuple:
 	swap
 	concat
 	callsub process_dynamic_tuple_element
-	int 2
-	itob
-	extract 6 0
-	int 3
-	itob
-	extract 6 0
+	byte 0x0002
+	byte 0x0003
 	concat
 	dup
 	len
@@ -55,12 +50,8 @@ shortenDynamicElementInTuple:
 	swap
 	concat
 	callsub process_dynamic_tuple_element
-	int 3
-	itob
-	extract 6 0
-	int 4
-	itob
-	extract 6 0
+	byte 0x0003
+	byte 0x0004
 	concat
 	dup
 	len
@@ -103,9 +94,7 @@ shortenDynamicElementInTuple:
 	int 0
 	load 1 // element start
 	substring3
-	int 5
-	itob
-	extract 6 0
+	byte 0x0005
 	dup
 	len
 	int 2
@@ -168,9 +157,7 @@ shortenDynamicElementInTuple:
 	int 0
 	load 1 // element start
 	substring3
-	int 6
-	itob
-	extract 6 0
+	byte 0x0006
 	dup
 	len
 	int 2
@@ -228,9 +215,7 @@ shortenDynamicElementInTuple:
 	int 0
 	load 1 // element start
 	substring3
-	int 7
-	itob
-	extract 6 0
+	byte 0x0007
 	dup
 	len
 	int 2
@@ -264,21 +249,16 @@ shortenDynamicElementInTuple:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "shortenDynamicElementInTuple()(uint16[],uint16[],uint16[])"
 	txna ApplicationArgs 0
 	match abi_route_shortenDynamicElementInTuple

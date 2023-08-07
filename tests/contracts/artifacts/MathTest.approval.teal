@@ -1,16 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_u64plus:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	btoi
@@ -36,15 +38,6 @@ u64plus:
 	retsub
 
 abi_route_u64minus:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	btoi
@@ -70,15 +63,6 @@ u64minus:
 	retsub
 
 abi_route_u64mul:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	btoi
@@ -104,15 +88,6 @@ u64mul:
 	retsub
 
 abi_route_u64div:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	btoi
@@ -138,15 +113,6 @@ u64div:
 	retsub
 
 abi_route_u256plus:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -164,6 +130,15 @@ u256plus:
 	b+
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -171,15 +146,6 @@ u256plus:
 	retsub
 
 abi_route_u256minus:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -197,6 +163,15 @@ u256minus:
 	b-
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -204,15 +179,6 @@ u256minus:
 	retsub
 
 abi_route_u256mul:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -230,6 +196,15 @@ u256mul:
 	b*
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -237,15 +212,6 @@ u256mul:
 	retsub
 
 abi_route_u256div:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -263,6 +229,15 @@ u256div:
 	b/
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -270,15 +245,6 @@ u256div:
 	retsub
 
 abi_route_u64Return256:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	btoi
@@ -299,6 +265,15 @@ u64Return256:
 	itob
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -306,15 +281,6 @@ u64Return256:
 	retsub
 
 abi_route_maxU64:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	callsub maxU64
 	int 1
@@ -329,21 +295,16 @@ maxU64:
 	assert
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "u64plus(uint64,uint64)uint64"
 	method "u64minus(uint64,uint64)uint64"
 	method "u64mul(uint64,uint64)uint64"

@@ -49,13 +49,11 @@ class MerkleTree extends Contract {
     return result;
   }
 
-  @handle.deleteApplication
-  delete(): void {
+  deleteApplication(): void {
     assert(this.txn.sender === this.app.creator);
   }
 
-  @handle.createApplication
-  create(): void {
+  createApplication(): void {
     this.root.set(this.calcInitRoot());
   }
 

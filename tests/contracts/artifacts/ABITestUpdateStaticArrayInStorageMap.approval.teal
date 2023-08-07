@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp call_OptIn
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_updateStaticArrayInStorageMap:
-	txn OnCompletion
-	int OptIn
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x; dup
 	callsub updateStaticArrayInStorageMap
 	int 1
@@ -55,9 +58,7 @@ updateStaticArrayInStorageMap:
 	app_global_get
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -75,9 +76,7 @@ updateStaticArrayInStorageMap:
 	app_local_get
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -96,9 +95,7 @@ updateStaticArrayInStorageMap:
 	assert
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -115,9 +112,7 @@ updateStaticArrayInStorageMap:
 	app_global_get
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -125,14 +120,23 @@ updateStaticArrayInStorageMap:
 	extract3
 	btoi
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	txn Sender
 	byte "lMap"
 	app_local_get
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -140,15 +144,24 @@ updateStaticArrayInStorageMap:
 	extract3
 	btoi
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	concat
 	byte "bMap"
 	box_get
 	assert
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -156,6 +169,17 @@ updateStaticArrayInStorageMap:
 	extract3
 	btoi
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	concat
 	frame_bury -2 // ret: uint64[3]
 
@@ -168,21 +192,19 @@ updateStaticArrayInStorageMap:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
+	err
+
+call_OptIn:
 	method "updateStaticArrayInStorageMap()uint64[3]"
 	txna ApplicationArgs 0
 	match abi_route_updateStaticArrayInStorageMap

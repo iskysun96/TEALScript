@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_disgusting:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub disgusting
 	int 1
@@ -23,12 +26,8 @@ disgusting:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x0036 // initial head offset
-	int 11
-	itob
-	extract 6 0
-	int 22
-	itob
-	extract 6 0
+	byte 0x000b
+	byte 0x0016
 	concat
 	callsub process_static_tuple_element
 	int 33
@@ -37,9 +36,7 @@ disgusting:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x000a // initial head offset
-	int 44
-	itob
-	extract 6 0
+	byte 0x002c
 	callsub process_static_tuple_element
 	int 55
 	itob
@@ -64,12 +61,8 @@ disgusting:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x0036 // initial head offset
-	int 111
-	itob
-	extract 6 0
-	int 222
-	itob
-	extract 6 0
+	byte 0x006f
+	byte 0x00de
 	concat
 	callsub process_static_tuple_element
 	int 333
@@ -78,9 +71,7 @@ disgusting:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x000a // initial head offset
-	int 444
-	itob
-	extract 6 0
+	byte 0x01bc
 	callsub process_static_tuple_element
 	int 555
 	itob
@@ -110,15 +101,11 @@ disgusting:
 	frame_dig -1 // a: [uint16[2],uint64,[uint16,uint64],uint64[2][2]][2]
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 54
-	* // acc * typeLength
+	int 54 // acc * typeLength
 	+
 	int 22 // headOffset
 	+
-	int 1
-	int 16
-	* // acc * typeLength
+	int 16 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -135,19 +122,13 @@ disgusting:
 	frame_dig -1 // a: [uint16[2],uint64,[uint16,uint64],uint64[2][2]][2]
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 54
-	* // acc * typeLength
+	int 54 // acc * typeLength
 	+
 	int 22 // headOffset
 	+
-	int 1
-	int 16
-	* // acc * typeLength
+	int 16 // acc * typeLength
 	+
-	int 0
-	int 8
-	* // acc * typeLength
+	int 0 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -161,21 +142,16 @@ disgusting:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "disgusting()uint64"
 	txna ApplicationArgs 0
 	match abi_route_disgusting

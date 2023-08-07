@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_updateDynamicElementInTupleWithSameLength:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub updateDynamicElementInTupleWithSameLength
 	int 1
@@ -23,20 +26,12 @@ updateDynamicElementInTupleWithSameLength:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x000a // initial head offset
-	int 1
-	itob
-	extract 6 0
+	byte 0x0001
 	callsub process_static_tuple_element
-	int 2
-	itob
-	extract 7 0
-	int 3
-	itob
-	extract 7 0
+	byte 0x02
+	byte 0x03
 	concat
-	int 4
-	itob
-	extract 7 0
+	byte 0x04
 	concat
 	dup
 	len
@@ -45,20 +40,12 @@ updateDynamicElementInTupleWithSameLength:
 	swap
 	concat
 	callsub process_dynamic_tuple_element
-	int 5
-	itob
-	extract 6 0
+	byte 0x0005
 	callsub process_static_tuple_element
-	int 6
-	itob
-	extract 7 0
-	int 7
-	itob
-	extract 7 0
+	byte 0x06
+	byte 0x07
 	concat
-	int 8
-	itob
-	extract 7 0
+	byte 0x08
 	concat
 	dup
 	len
@@ -67,9 +54,7 @@ updateDynamicElementInTupleWithSameLength:
 	swap
 	concat
 	callsub process_dynamic_tuple_element
-	int 9
-	itob
-	extract 6 0
+	byte 0x0009
 	callsub process_static_tuple_element
 	pop // pop head offset
 	concat // concat head and tail
@@ -103,16 +88,10 @@ updateDynamicElementInTupleWithSameLength:
 	int 0
 	load 1 // element start
 	substring3
-	int 10
-	itob
-	extract 7 0
-	int 11
-	itob
-	extract 7 0
+	byte 0x0a
+	byte 0x0b
 	concat
-	int 12
-	itob
-	extract 7 0
+	byte 0x0c
 	concat
 	dup
 	len
@@ -150,21 +129,16 @@ updateDynamicElementInTupleWithSameLength:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "updateDynamicElementInTupleWithSameLength()(uint16,uint8[],uint16,uint8[],uint16)"
 	txna ApplicationArgs 0
 	match abi_route_updateDynamicElementInTupleWithSameLength

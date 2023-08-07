@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_arrayInTuple:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub arrayInTuple
 	int 1
@@ -26,9 +29,7 @@ arrayInTuple:
 	int 11
 	itob
 	callsub process_static_tuple_element
-	int 22
-	itob
-	extract 6 0
+	byte 0x0016
 	callsub process_static_tuple_element
 	int 33
 	itob
@@ -36,9 +37,7 @@ arrayInTuple:
 	itob
 	concat
 	callsub process_static_tuple_element
-	int 55
-	itob
-	extract 6 0
+	byte 0x0037
 	callsub process_static_tuple_element
 	pop // pop head offset
 	concat // concat head and tail
@@ -51,9 +50,7 @@ arrayInTuple:
 	int 0 // initial offset
 	int 10 // headOffset
 	+
-	int 1
-	int 8
-	* // acc * typeLength
+	int 8 // acc * typeLength
 	+
 	load 0 // full array
 	swap
@@ -67,21 +64,16 @@ arrayInTuple:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "arrayInTuple()uint64"
 	txna ApplicationArgs 0
 	match abi_route_arrayInTuple

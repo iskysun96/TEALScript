@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_dynamicTupleArray:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub dynamicTupleArray
 	int 1
@@ -23,9 +26,7 @@ dynamicTupleArray:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x000a // initial head offset
-	int 11
-	itob
-	extract 6 0
+	byte 0x000b
 	callsub process_static_tuple_element
 	int 22
 	itob
@@ -35,9 +36,7 @@ dynamicTupleArray:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x000a // initial head offset
-	int 33
-	itob
-	extract 6 0
+	byte 0x0021
 	callsub process_static_tuple_element
 	int 44
 	itob
@@ -52,9 +51,7 @@ dynamicTupleArray:
 	frame_dig -1 // a: [uint16,uint64][]
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 10
-	* // acc * typeLength
+	int 10 // acc * typeLength
 	+
 	int 2 // headOffset
 	+
@@ -70,21 +67,16 @@ dynamicTupleArray:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "dynamicTupleArray()uint64"
 	txna ApplicationArgs 0
 	match abi_route_dynamicTupleArray

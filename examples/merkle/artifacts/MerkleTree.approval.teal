@@ -1,5 +1,16 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED create_DeleteApplication call_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_DeleteApplication
+
+NOT_IMPLEMENTED:
+	err
 
 calcInitRoot:
 	proto 2 1
@@ -161,25 +172,16 @@ for_1_end:
 	frame_dig -1 // leaf: byte[32]
 	retsub
 
-bare_route_DeleteApplication:
-	txn OnCompletion
-	int DeleteApplication
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
+abi_route_deleteApplication:
 	// no dupn needed
-	callsub delete
+	callsub deleteApplication
 	int 1
 	return
 
-delete:
+deleteApplication:
 	proto 0 0
 
-	// examples/merkle/merkle.algo.ts:54
+	// examples/merkle/merkle.algo.ts:53
 	// assert(this.txn.sender === this.app.creator)
 	txn Sender
 	txna Applications 0
@@ -189,25 +191,16 @@ delete:
 	assert
 	retsub
 
-bare_route_create:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	==
-	&&
-	assert
-
+abi_route_createApplication:
 	// no dupn needed
-	callsub create
+	callsub createApplication
 	int 1
 	return
 
-create:
+createApplication:
 	proto 0 0
 
-	// examples/merkle/merkle.algo.ts:59
+	// examples/merkle/merkle.algo.ts:57
 	// this.root.set(this.calcInitRoot())
 	byte "root"
 	byte 0x; dup
@@ -216,15 +209,6 @@ create:
 	retsub
 
 abi_route_verify:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -236,7 +220,7 @@ abi_route_verify:
 verify:
 	proto 2 0
 
-	// examples/merkle/merkle.algo.ts:63
+	// examples/merkle/merkle.algo.ts:61
 	// assert(this.root.get() === this.calcRoot(sha256(data), path))
 	byte "root"
 	app_global_get
@@ -250,15 +234,6 @@ verify:
 	retsub
 
 abi_route_appendLeaf:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -270,14 +245,14 @@ abi_route_appendLeaf:
 appendLeaf:
 	proto 2 0
 
-	// examples/merkle/merkle.algo.ts:67
+	// examples/merkle/merkle.algo.ts:65
 	// assert(data !== '')
 	frame_dig -1 // data: bytes
 	byte ""
 	!=
 	assert
 
-	// examples/merkle/merkle.algo.ts:68
+	// examples/merkle/merkle.algo.ts:66
 	// assert(this.root.get() === this.calcRoot(EMPTY_HASH, path))
 	byte "root"
 	app_global_get
@@ -291,7 +266,7 @@ appendLeaf:
 	==
 	assert
 
-	// examples/merkle/merkle.algo.ts:70
+	// examples/merkle/merkle.algo.ts:68
 	// this.root.set(this.calcRoot(sha256(data), path))
 	byte "root"
 	byte 0x; dup
@@ -301,7 +276,7 @@ appendLeaf:
 	callsub calcRoot
 	app_global_put
 
-	// examples/merkle/merkle.algo.ts:72
+	// examples/merkle/merkle.algo.ts:70
 	// this.size.set(this.size.get() + 1)
 	byte "size"
 	byte "size"
@@ -312,15 +287,6 @@ appendLeaf:
 	retsub
 
 abi_route_updateLeaf:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 3
 	txna ApplicationArgs 2
@@ -334,14 +300,14 @@ abi_route_updateLeaf:
 updateLeaf:
 	proto 3 0
 
-	// examples/merkle/merkle.algo.ts:76
+	// examples/merkle/merkle.algo.ts:74
 	// assert(newData !== '')
 	frame_dig -2 // newData: bytes
 	byte ""
 	!=
 	assert
 
-	// examples/merkle/merkle.algo.ts:77
+	// examples/merkle/merkle.algo.ts:75
 	// assert(this.root.get() === this.calcRoot(sha256(oldData), path))
 	byte "root"
 	app_global_get
@@ -353,7 +319,7 @@ updateLeaf:
 	==
 	assert
 
-	// examples/merkle/merkle.algo.ts:79
+	// examples/merkle/merkle.algo.ts:77
 	// this.root.set(this.calcRoot(sha256(newData), path))
 	byte "root"
 	byte 0x; dup
@@ -364,23 +330,23 @@ updateLeaf:
 	app_global_put
 	retsub
 
-main:
+create_NoOp:
 	txn NumAppArgs
-	bnz route_abi
-	txn ApplicationID
-	int 0
-	==
-	bnz bare_route_create
-	txn OnCompletion
-	int DeleteApplication
-	==
-	int 1
-	match bare_route_DeleteApplication
+	switch abi_route_createApplication
+	err
 
-route_abi:
+call_NoOp:
 	method "verify(byte[],byte[33][3])void"
 	method "appendLeaf(byte[],byte[33][3])void"
 	method "updateLeaf(byte[],byte[],byte[33][3])void"
 	txna ApplicationArgs 0
 	match abi_route_verify abi_route_appendLeaf abi_route_updateLeaf
+	err
+
+create_DeleteApplication:
+	err
+
+call_DeleteApplication:
+	txn NumAppArgs
+	switch abi_route_deleteApplication
 	err

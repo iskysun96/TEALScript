@@ -1,3 +1,4 @@
+/* eslint-disable no-nested-ternary */
 /* eslint-disable no-plusplus */
 /* eslint-disable max-classes-per-file */
 /* eslint-disable no-unused-vars */
@@ -8,6 +9,16 @@ import sourceMap from 'source-map';
 import path from 'path';
 import * as tsdoc from '@microsoft/tsdoc';
 import * as langspec from '../langspec.json';
+
+type OnComplete = 'NoOp' | 'OptIn' | 'CloseOut' | 'ClearState' | 'UpdateApplication' | 'DeleteApplication';
+const ON_COMPLETES: ['NoOp', 'OptIn', 'CloseOut', 'ClearState', 'UpdateApplication', 'DeleteApplication'] = ['NoOp', 'OptIn', 'CloseOut', 'ClearState', 'UpdateApplication', 'DeleteApplication'];
+
+// eslint-disable-next-line no-shadow
+enum StorageType {
+  GLOBAL,
+  LOCAL,
+  BOX
+}
 
 export type CompilerOptions = {
   filename?: string,
@@ -231,13 +242,20 @@ interface StorageProp {
   prefix?: string;
 }
 
-interface Subroutine {
-  name: string;
-  returnType: string;
-  handles: string[];
-  readonly: boolean;
+interface ABIMethod {
+  name: string
+  readonly?: boolean
+  desc: string
+  args: {name: string, type: string, desc: string}[]
+  returns: {type: string, desc: string}
 }
 
+interface Subroutine extends ABIMethod{
+  allows: {
+    create: string[]
+    call: string[]
+  }
+}
 // These should probably be types rather than strings?
 function isNumeric(t: string): boolean {
   return ['uint64', 'asset', 'application'].includes(t);
@@ -260,9 +278,22 @@ const scratch = {
 };
 
 export default class Compiler {
-  teal: string[] = ['#pragma version 8', 'b main'];
+  teal: string[] = [
+    '#pragma version 9',
+    '',
+    'txn ApplicationID',
+    'int 0',
+    '>',
+    'int 6',
+    '*',
+    'txn OnCompletion',
+    '+',
+    'switch create_NoOp create_OptIn NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED create_DeleteApplication call_NoOp call_OptIn call_CloseOut NOT_IMPLEMENTED call_UpdateApplication call_DeleteApplication',
+    'NOT_IMPLEMENTED:',
+    'err',
+  ];
 
-  clearTeal: string[] = ['#pragma version 8'];
+  clearTeal: string[] = ['#pragma version 9'];
 
   generatedTeal: string = '';
 
@@ -302,13 +333,7 @@ export default class Compiler {
 
   private frameSize: {[methodName: string]: number} = {};
 
-  private subroutines: {
-    [methodName: string]: {
-      returnType: string,
-      args: number,
-      comment?: string
-    }
-  } = {};
+  private subroutines: Subroutine[] = [];
 
   private clearStateCompiled: boolean = false;
 
@@ -339,26 +364,21 @@ export default class Compiler {
     }
   } = {};
 
-  private currentSubroutine: Subroutine = {
-    name: '', returnType: '', readonly: false, handles: [],
-  };
+  private currentSubroutine!: Subroutine;
 
-  private bareOnCompletes: string[] = [];
-
-  private bareCreate: boolean = false;
-
-  private handledActions: {[method: string]: string[]} = {};
+  private bareCallConfig: {
+    NoOp? : {action: 'CALL' | 'CREATE' | 'NEVER', method: string}
+    OptIn? : {action: 'CALL' | 'CREATE', method: string}
+    CloseOut? : {action: 'CALL' | 'CREATE', method: string}
+    ClearState? : {action: 'CALL' | 'CREATE', method: string}
+    UpdateApplication? : {action: 'CALL' | 'CREATE', method: string}
+    DeleteApplication? : {action: 'CALL' | 'CREATE', method: string}
+  } = {};
 
   abi: {
     name: string,
     desc: string,
-    methods: {
-      name: string,
-      readonly?: boolean,
-      desc: string,
-      args: {name: string, type: string, desc: string}[],
-      returns: {type: string, desc: string},
-      }[],
+    methods: ABIMethod[],
     } = {
       name: '', desc: '', methods: [],
     };
@@ -416,498 +436,179 @@ export default class Compiler {
     }
   }
 
-  private storageFunctions: {[type: string]: {[f: string]: Function}} = {
-    global: {
-      get: (node: ts.CallExpression, storageKeyFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
+  private handleStorageAction(
+    node: ts.CallExpression,
+    storageType: StorageType,
+    action: 'get' | 'set' | 'exists' | 'delete' | 'create' | 'extract' | 'replace' | 'size',
+    storageKeyFrame?: string,
+    storageAccountFrame?: string,
+  ) {
+    if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
+    if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
+    const name = node.expression.expression.name.getText();
 
-        const {
-          valueType, keyType, key, prefix,
-        } = this.storageProps[name];
+    const {
+      valueType, keyType, key, dynamicSize, prefix,
+    } = this.storageProps[name];
 
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.expression, `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
+    if (storageAccountFrame && storageType === StorageType.LOCAL) {
+      this.pushVoid(node.expression, `frame_dig ${this.frame[storageAccountFrame].index} // ${storageAccountFrame}`);
+    } else if (storageType === StorageType.LOCAL) {
+      this.processNode(node.arguments[0]);
+    }
 
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
+    if (action === 'exists' && (storageType === StorageType.GLOBAL || storageType === StorageType.LOCAL)) {
+      this.pushVoid(node.expression, 'txna Applications 0');
+    }
 
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
+    if (key) {
+      this.pushVoid(node.expression, `byte "${key}"`);
+    } else if (storageKeyFrame) {
+      this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
+    } else {
+      const argumentIndex = storageType === StorageType.LOCAL ? 1 : 0;
+      if (prefix) this.pushVoid(node.arguments[argumentIndex], `byte "${prefix}"`);
+      this.processNode(node.arguments[argumentIndex]);
+
+      if (keyType !== StackType.bytes) {
+        this.checkEncoding(node.arguments[argumentIndex], this.lastType);
+      }
+
+      if (isNumeric(keyType)) this.pushVoid(node.arguments[argumentIndex], 'itob');
+      if (prefix) this.pushVoid(node.arguments[argumentIndex], 'concat');
+    }
+
+    switch (action) {
+      case 'get':
+        if (storageType === StorageType.GLOBAL) {
+          this.push(node.expression, 'app_global_get', valueType);
+        } else if (storageType === StorageType.LOCAL) {
+          this.push(node.expression, 'app_local_get', valueType);
+        } else if (storageType === StorageType.BOX) {
+          this.maybeValue(node.expression, 'box_get', valueType);
+          if (isNumeric(valueType)) this.push(node.expression, 'btoi', valueType);
         }
-
-        this.push(node.expression, 'app_global_get', valueType);
         if (valueType !== StackType.bytes) this.checkDecoding(node, valueType);
-      },
-      set: (node: ts.CallExpression, storageKeyFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
+        break;
 
-        const {
-          valueType, keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
+      case 'set': {
+        if (storageType === StorageType.BOX && dynamicSize) {
+          this.pushLines(node.expression, 'dup', 'box_del', 'pop');
         }
 
-        if (node.arguments[key ? 0 : 1]) {
-          this.processNode(node.arguments[key ? 0 : 1]);
+        const valueArgIndex = key ? (storageType === StorageType.LOCAL ? 1 : 0)
+          : (storageType === StorageType.LOCAL ? 2 : 1);
+
+        if (node.arguments[valueArgIndex]) {
+          this.processNode(node.arguments[valueArgIndex]);
           if (valueType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[key ? 0 : 1], this.lastType);
+            this.checkEncoding(node.arguments[valueArgIndex], this.lastType);
           }
         } else {
-          this.pushVoid(node.expression, 'swap'); // Used when updating storage array
+          const command = storageType === StorageType.BOX ? 'swap' : (storageType === StorageType.LOCAL ? 'uncover 2' : 'swap');
+          this.pushVoid(node.expression, command);
           if (valueType !== StackType.bytes) {
             this.checkEncoding(node, valueType);
           }
         }
 
-        this.push(node.expression, 'app_global_put', valueType);
+        if (isNumeric(valueType) && storageType === StorageType.BOX) this.pushVoid(node.expression, 'itob');
+        const operation = storageType === StorageType.GLOBAL ? 'app_global_put' : (storageType === StorageType.LOCAL ? 'app_local_put' : 'box_put');
+        this.push(node.expression, operation, valueType);
+        break;
+      }
+
+      case 'exists': {
+        const existsAction = (storageType === StorageType.GLOBAL) ? 'app_global_get_ex' : (storageType === StorageType.LOCAL) ? 'app_local_get_ex' : 'box_len';
+        this.hasMaybeValue(node.expression, existsAction);
+        break;
+      }
+
+      case 'delete': {
+        const deleteAction = (storageType === StorageType.GLOBAL) ? 'app_global_del' : (storageType === StorageType.LOCAL) ? 'app_local_del' : 'box_del';
+        this.pushVoid(node.expression, deleteAction);
+        break;
+      }
+
+      case 'create':
+
+        this.processNode(node.arguments[key ? 0 : 1]);
+        this.pushVoid(node.expression, 'box_create');
+        break;
+
+      case 'extract':
+        this.processNode(node.arguments[key ? 0 : 1]);
+        this.processNode(node.arguments[key ? 1 : 2]);
+        this.push(node.expression, 'box_extract', StackType.bytes);
+        break;
+
+      case 'replace':
+        this.processNode(node.arguments[key ? 0 : 1]);
+        this.processNode(node.arguments[key ? 1 : 2]);
+        this.pushVoid(node.expression, 'box_replace');
+        break;
+
+      case 'size':
+        this.maybeValue(node.expression, 'box_len', StackType.uint64);
+        break;
+      default:
+        throw new Error();
+    }
+  }
+
+  private storageFunctions: {[type: string]: {[f: string]: Function}} = {
+    global: {
+      get: (node: ts.CallExpression, storageKeyFrame?: string) => {
+        this.handleStorageAction(node, StorageType.GLOBAL, 'get', storageKeyFrame);
+      },
+      set: (node: ts.CallExpression, storageKeyFrame?: string) => {
+        this.handleStorageAction(node, StorageType.GLOBAL, 'set', storageKeyFrame);
       },
       delete: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.pushVoid(node.expression, 'app_global_del');
+        this.handleStorageAction(node, StorageType.GLOBAL, 'delete');
       },
       exists: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        this.pushVoid(node.expression, 'txna Applications 0');
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.hasMaybeValue(node.expression, 'app_global_get_ex');
+        this.handleStorageAction(node, StorageType.GLOBAL, 'exists');
       },
     },
     local: {
       get: (node: ts.CallExpression, storageKeyFrame?: string, storageAccountFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          valueType, keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (storageAccountFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageAccountFrame].index} // ${storageAccountFrame}`);
-        } else {
-          this.processNode(node.arguments[0]);
-        }
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[1], `byte "${prefix}"`);
-          this.processNode(node.arguments[1]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[1], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[1], 'itob');
-          if (prefix) this.pushVoid(node.arguments[1], 'concat');
-        }
-
-        this.push(node.expression, 'app_local_get', valueType);
-        if (valueType !== StackType.bytes) this.checkDecoding(node, valueType);
+        this.handleStorageAction(node, StorageType.LOCAL, 'get', storageKeyFrame, storageAccountFrame);
       },
       set: (node: ts.CallExpression, storageKeyFrame?: string, storageAccountFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          valueType, keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (storageAccountFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageAccountFrame].index} // ${storageAccountFrame}`);
-        } else {
-          this.processNode(node.arguments[0]);
-        }
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[1], `byte "${prefix}"`);
-          this.processNode(node.arguments[1]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[1], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[1], 'itob');
-          if (prefix) this.pushVoid(node.arguments[1], 'concat');
-        }
-
-        if (node.arguments[key ? 1 : 2]) {
-          this.processNode(node.arguments[key ? 1 : 2]);
-          if (valueType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[key ? 1 : 2], this.lastType);
-          }
-        } else {
-          this.pushVoid(node.expression, 'uncover 2'); // Used when updating storage array
-          if (valueType !== StackType.bytes) {
-            this.checkEncoding(node, valueType);
-          }
-        }
-
-        this.push(node.expression, 'app_local_put', valueType);
+        this.handleStorageAction(node, StorageType.LOCAL, 'set', storageKeyFrame, storageAccountFrame);
       },
       delete: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        this.processNode(node.arguments[0]);
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[1], `byte "${prefix}"`);
-          this.processNode(node.arguments[1]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[1], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[1], 'itob');
-          if (prefix) this.pushVoid(node.arguments[1], 'concat');
-        }
-
-        this.pushVoid(node.expression, 'app_local_del');
+        this.handleStorageAction(node, StorageType.LOCAL, 'delete');
       },
       exists: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-        this.processNode(node.arguments[0]);
-        this.pushVoid(node.expression, 'txna Applications 0');
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[1], `byte "${prefix}"`);
-          this.processNode(node.arguments[1]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[1], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[1], 'itob');
-          if (prefix) this.pushVoid(node.arguments[1], 'concat');
-        }
-
-        this.hasMaybeValue(node.expression, 'app_local_get_ex');
+        this.handleStorageAction(node, StorageType.LOCAL, 'exists');
       },
     },
     box: {
       create: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.processNode(node.arguments[key ? 0 : 1]);
-
-        this.pushVoid(node.expression, 'box_create');
+        this.handleStorageAction(node, StorageType.BOX, 'create');
       },
       extract: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.processNode(node.arguments[key ? 0 : 1]);
-        this.processNode(node.arguments[key ? 1 : 2]);
-
-        this.push(node.expression, 'box_extract', StackType.bytes);
+        this.handleStorageAction(node, StorageType.BOX, 'extract');
       },
       replace: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.processNode(node.arguments[key ? 0 : 1]);
-        this.processNode(node.arguments[key ? 1 : 2]);
-
-        this.pushVoid(node.expression, 'box_replace');
+        this.handleStorageAction(node, StorageType.BOX, 'replace');
       },
       size: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.maybeValue(node.expression, 'box_len', StackType.uint64);
+        this.handleStorageAction(node, StorageType.BOX, 'size');
       },
       get: (node: ts.CallExpression, storageKeyFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          valueType, keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.maybeValue(node.expression, 'box_get', valueType);
-        if (isNumeric(valueType)) this.push(node.expression, 'btoi', valueType);
-        if (valueType !== StackType.bytes) this.checkDecoding(node, valueType);
+        this.handleStorageAction(node, StorageType.BOX, 'get', storageKeyFrame);
       },
       set: (node: ts.CallExpression, storageKeyFrame?: string) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          valueType, keyType, key, dynamicSize, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else if (storageKeyFrame) {
-          this.pushVoid(node.expression, `frame_dig ${this.frame[storageKeyFrame].index} // ${storageKeyFrame}`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        if (dynamicSize) this.pushLines(node.expression, 'dup', 'box_del', 'pop');
-
-        if (node.arguments[key ? 0 : 1]) {
-          this.processNode(node.arguments[key ? 0 : 1]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[key ? 0 : 1], this.lastType);
-          }
-        } else {
-          this.pushVoid(node.expression, 'swap'); // Used when updating storage array
-          if (valueType !== StackType.bytes) {
-            this.checkEncoding(node, valueType);
-          }
-        }
-
-        if (isNumeric(valueType)) this.pushVoid(node.expression, 'itob');
-
-        this.push(node.expression, 'box_put', valueType);
+        this.handleStorageAction(node, StorageType.BOX, 'set', storageKeyFrame);
       },
       delete: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.pushVoid(node.expression, 'box_del');
+        this.handleStorageAction(node, StorageType.BOX, 'delete');
       },
       exists: (node: ts.CallExpression) => {
-        if (!ts.isPropertyAccessExpression(node.expression)) throw new Error();
-        if (!ts.isPropertyAccessExpression(node.expression.expression)) throw new Error();
-        const name = node.expression.expression.name.getText();
-
-        const {
-          keyType, key, prefix,
-        } = this.storageProps[name];
-
-        if (key) {
-          this.pushVoid(node.expression, `byte "${key}"`);
-        } else {
-          if (prefix) this.pushVoid(node.arguments[0], `byte "${prefix}"`);
-          this.processNode(node.arguments[0]);
-
-          if (keyType !== StackType.bytes) {
-            this.checkEncoding(node.arguments[0], this.lastType);
-          }
-
-          if (isNumeric(keyType)) this.pushVoid(node.arguments[0], 'itob');
-          if (prefix) this.pushVoid(node.arguments[0], 'concat');
-        }
-
-        this.hasMaybeValue(node.expression, 'box_len');
+        this.handleStorageAction(node, StorageType.BOX, 'exists');
       },
     },
   };
@@ -1332,7 +1033,22 @@ export default class Compiler {
       }
     });
 
-    this.pushVoid(this.lastNode, 'main:');
+    if (
+      this.subroutines.map((a) => a.allows.create).flat().length === 0
+      && !Object.values(this.bareCallConfig).map((c) => c.action).includes('CREATE')
+    ) {
+      const name = 'defaultTEALScriptCreate';
+      const m = {
+        name,
+        desc: 'The default create method generated by TEALScript',
+        returns: { type: 'void', desc: '' },
+        args: [],
+      };
+
+      this.bareCallConfig.NoOp = { action: 'CREATE', method: name };
+      this.pushLines(this.lastNode, `abi_route_${name}:`, 'int 1', 'return');
+    }
+
     this.routeAbiMethods();
 
     Object.keys(this.compilerSubroutines).forEach((sub) => {
@@ -1356,21 +1072,26 @@ export default class Compiler {
           return `byte b64 ${program}`;
         }
 
+        const method = t.split(' ')[1];
+        const subroutine = this.subroutines.find((s) => s.name === method);
+
         if (t.startsWith('PENDING_DUPN')) {
-          const method = t.split(' ')[1];
-          const nonArgFrameSize = this.frameSize[method] - this.subroutines[method].args;
+          if (subroutine === undefined) throw new Error(`Subroutine ${method} not found`);
+
+          const nonArgFrameSize = this.frameSize[method] - subroutine.args.length;
 
           if (nonArgFrameSize === 0) return '// no dupn needed';
 
           if (nonArgFrameSize === 1) return 'byte 0x';
           if (nonArgFrameSize === 2) return 'byte 0x; dup';
-          return ['byte 0x', `dupn ${this.frameSize[method] - this.subroutines[method].args - 1}`];
+          return ['byte 0x', `dupn ${nonArgFrameSize - 1}`];
         }
 
         if (t.startsWith('PENDING_PROTO')) {
-          const method = t.split(' ')[1];
+          if (subroutine === undefined) throw new Error(`Subroutine ${method} not found`);
+
           const isAbi = this.abi.methods.map((m) => m.name).includes(method);
-          return `proto ${this.frameSize[method]} ${this.subroutines[method].returnType === 'void' || isAbi ? 0 : 1}`;
+          return `proto ${this.frameSize[method]} ${subroutine.returns.type === 'void' || isAbi ? 0 : 1}`;
         }
 
         return t;
@@ -1385,25 +1106,33 @@ export default class Compiler {
 
     this.abi.methods.forEach((method) => {
       const m = method;
+      const subroutine = this.subroutines.find((s) => s.name === m.name);
 
-      const { comment } = this.subroutines[m.name];
-      if (comment === undefined) return;
+      if (subroutine === undefined) throw Error(`Subroutine ${m.name} not found`);
 
-      const tsdocParser = new tsdoc.TSDocParser();
-      const { docComment } = tsdocParser.parseString(comment);
+      const comment = subroutine.desc;
+      if (comment === '') return;
 
-      m.desc = renderDocNode(docComment.summarySection);
+      try {
+        const tsdocParser = new tsdoc.TSDocParser();
+        const { docComment } = tsdocParser.parseString(comment);
 
-      docComment.params.blocks.forEach((p) => {
-        const arg = m.args.find((a) => a.name === p.parameterName);
+        m.desc = renderDocNode(docComment.summarySection);
 
-        if (arg === undefined) throw new Error(`${p.parameterName} is not an argument of ${m.name}`);
+        docComment.params.blocks.forEach((p) => {
+          const arg = m.args.find((a) => a.name === p.parameterName);
 
-        arg.desc = renderDocNode(p.content);
-      });
+          if (arg === undefined) throw new Error(`${p.parameterName} is not an argument of ${m.name}`);
 
-      if (docComment.returnsBlock) {
-        m.returns.desc = renderDocNode(docComment.returnsBlock.content);
+          arg.desc = renderDocNode(p.content);
+        });
+
+        if (docComment.returnsBlock) {
+          m.returns.desc = renderDocNode(docComment.returnsBlock.content);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`Error when parsing tsdoc comment for ${m.name}: ${e}`);
       }
     });
   }
@@ -1434,12 +1163,13 @@ export default class Compiler {
     this.push(node, teal, 'void');
   }
 
-  private pushMethod(name: string, args: string[], returns: string) {
-    const abiArgs = args.map((a) => this.getABITupleString(a));
+  private pushMethod(subroutine: ABIMethod) {
+    const abiArgs = subroutine.args.map((a) => this.getABITupleString(a.type));
 
-    let abiReturns = returns;
+    let abiReturns = subroutine.returns.type;
 
     switch (abiReturns) {
+      case 'asset':
       case 'application':
         abiReturns = 'uint64';
         break;
@@ -1450,62 +1180,60 @@ export default class Compiler {
         break;
     }
 
-    const sig = `${name}(${abiArgs.join(',')})${this.getABITupleString(abiReturns)}`;
+    const sig = `${subroutine.name}(${abiArgs.join(',')})${this.getABITupleString(abiReturns)}`;
     this.pushVoid(this.lastNode, `method "${sig}"`);
   }
 
   private routeAbiMethods() {
-    this.pushVoid(this.lastNode, 'txn NumAppArgs');
-    this.pushVoid(this.lastNode, 'bnz route_abi');
+    const switchIndex = 9;
 
-    if (this.bareCreate) {
-      this.pushLines(this.lastNode, 'txn ApplicationID', 'int 0', '==', 'bnz bare_route_create');
-    }
+    ON_COMPLETES.forEach((onComplete) => {
+      if (onComplete === 'ClearState') return;
+      ['create', 'call'].forEach((a) => {
+        const methods = this.abi.methods.filter((m) => {
+          const subroutine = this.subroutines.find((s) => s.name === m.name)!;
+          return subroutine.allows[a as 'call' | 'create'].includes(onComplete);
+        });
 
-    // Route the bare methods with no args
-    if (this.bareOnCompletes.length > 0) {
-      this.bareOnCompletes.forEach((oc) => {
-        this.pushLines(this.lastNode, 'txn OnCompletion', `int ${oc}`, '==');
+        if (methods.length === 0 && this.bareCallConfig[onComplete] === undefined) {
+          this.teal[switchIndex] = this.teal[switchIndex].replace(`${a}_${onComplete}`, 'NOT_IMPLEMENTED');
+          return;
+        }
+
+        this.pushVoid(this.lastNode, `${a}_${onComplete}:`);
+
+        if (a.toUpperCase() === this.bareCallConfig[onComplete]?.action) {
+          this.pushLines(this.lastNode, 'txn NumAppArgs', `switch abi_route_${this.bareCallConfig[onComplete]!.method}`);
+        }
+
+        if (methods.length === 0) {
+          this.pushVoid(this.lastNode, 'err');
+          return;
+        }
+
+        methods.forEach((m) => {
+          this.pushMethod(m);
+        });
+
+        this.pushLines(this.lastNode, 'txna ApplicationArgs 0', `match ${methods.map((m) => `abi_route_${m.name}`).join(' ')}`, 'err');
       });
-
-      this.pushVoid(this.lastNode, 'int 1');
-
-      this.pushVoid(this.lastNode, `match ${this.bareOnCompletes.map((oc) => `bare_route_${oc}`).join(' ')}`);
-    }
-
-    if (!Object.values(this.handledActions).flat().includes('createApplication')) {
-      this.pushLines(
-        this.lastNode,
-        '// default createApplication',
-        'txn ApplicationID',
-        'int 0',
-        '==',
-        'txn OnCompletion',
-        'int NoOp',
-        '==',
-        '&&',
-        'return',
-      );
-    }
-
-    this.pushVoid(this.lastNode, 'route_abi:');
-    // Route the abi methods with args
-    this.abi.methods.forEach((m) => {
-      this.pushMethod(
-        m.name,
-        m.args.map((a) => a.type),
-        m.returns.type,
-      );
     });
-    this.pushVoid(this.lastNode, 'txna ApplicationArgs 0');
-    this.pushVoid(
-      this.lastNode,
-      `match ${this.abi.methods
-        .map((m) => `abi_route_${m.name}`)
-        .join(' ')}`,
-    );
 
-    this.pushVoid(this.lastNode, 'err');
+    if (this.teal[switchIndex].endsWith('NOT_IMPLEMENTED')) {
+      const removeLastDuplicates = (array: string[]) => {
+        let lastIndex = array.length - 1;
+        const element = array[lastIndex];
+        while (array[lastIndex] === element && lastIndex >= 0) {
+          array.pop();
+          lastIndex--;
+        }
+        return array;
+      };
+
+      const switchLine = removeLastDuplicates(this.teal[switchIndex].split(' ')).join(' ');
+
+      this.teal[switchIndex] = switchLine;
+    }
   }
 
   private maybeValue(node: ts.Node, opcode: string, type: string) {
@@ -1756,7 +1484,7 @@ export default class Compiler {
       this.checkEncoding(e, types[i]);
 
       if (isNumeric(this.lastType)) this.pushVoid(e, 'itob');
-      if (this.lastType.match(/uint\d+$/) && this.lastType !== types[i]) this.fixBitWidth(e, parseInt(types[i].match(/\d+$/)![0], 10), !ts.isNumericLiteral(e));
+      if ((this.lastType.match(/uint\d+$/) || this.lastType.match(/ufixed\d+x\d+$/)) && !ts.isNumericLiteral(e)) this.fixBitWidth(e, parseInt(types[i].match(/\d+$/)![0], 10));
 
       if (this.isDynamicType(types[i])) {
         this.pushVoid(e, 'callsub process_dynamic_tuple_element');
@@ -1877,7 +1605,7 @@ export default class Compiler {
         this.typeHint = types[i];
         this.processNode(e);
         if (isNumeric(this.lastType)) this.pushVoid(e, 'itob');
-        if (this.lastType.match(/uint\d+$/) && this.lastType !== types[i]) this.fixBitWidth(e, parseInt(types[i].match(/\d+$/)![0], 10), !ts.isNumericLiteral(e));
+        if ((this.lastType.match(/uint\d+$/) || this.lastType.match(/ufixed\d+x\d+$/)) && !ts.isNumericLiteral(e)) this.fixBitWidth(e, parseInt(types[i].match(/\d+$/)![0], 10));
         if (i) this.pushVoid(parentNode, 'concat');
       });
     }
@@ -2192,25 +1920,32 @@ export default class Compiler {
         );
       // Dynamic element in static or dynamic array
       } else if (this.isDynamicType(elem.type)) {
-        this.processNode(acc);
-        this.pushLines(
-          acc,
-          // `int ${accNumber * 2} // acc * 2`,
-          'int 2',
-          '* // acc * 2',
-          '+',
-        );
+        if (!Number.isNaN(accNumber)) {
+          this.pushLines(acc, `int ${accNumber * 2} // acc * 2`, '+');
+        } else {
+          this.processNode(acc);
+
+          this.pushLines(
+            acc,
+            'int 2',
+            '* // acc * 2',
+            '+',
+          );
+        }
       // Static element in array
       } else if (!previousElemIsBool) {
-        this.processNode(acc);
+        if (!Number.isNaN(accNumber)) {
+          this.pushLines(acc, `int ${accNumber * this.getTypeLength(elem.type)} // acc * typeLength`, '+');
+        } else {
+          this.processNode(acc);
 
-        this.pushLines(
-          acc,
-          // `int ${accNumber * this.getTypeLength(elem.type)} // acc * typeLength`,
-          `int ${this.getTypeLength(elem.type)}`,
-          '* // acc * typeLength',
-          '+',
-        );
+          this.pushLines(
+            acc,
+            `int ${this.getTypeLength(elem.type)}`,
+            '* // acc * typeLength',
+            '+',
+          );
+        }
       }
 
       if (
@@ -2468,25 +2203,30 @@ export default class Compiler {
   }
 
   private processMethodDefinition(node: ts.MethodDeclaration) {
-    this.currentSubroutine.readonly = false;
-
     if (!ts.isIdentifier(node.name)) throw new Error('method name must be identifier');
-    this.currentSubroutine.name = node.name.getText();
 
     const returnType = this.getABIType(node.type!.getText());
     if (returnType === undefined) throw new Error(`A return type annotation must be defined for ${node.name.getText()}`);
-    this.currentSubroutine.returnType = returnType;
 
-    this.subroutines[this.currentSubroutine.name] = {
-      returnType,
-      args: node.parameters.length,
+    this.currentSubroutine = {
+      name: node.name.getText(),
+      allows: { call: [], create: [] },
+      args: [],
+      desc: '',
+      returns: { type: returnType, desc: '' },
     };
+
+    new Array(...node.parameters).reverse().forEach((p) => {
+      this.currentSubroutine.args.push({ name: p.name.getText(), type: this.getABIType(this.getABIType(p!.type!.getText())), desc: '' });
+    });
+
+    this.subroutines.push(this.currentSubroutine);
 
     const leadingCommentRanges = ts.getLeadingCommentRanges(this.sourceFile.text, node.pos) || [];
     const headerCommentRange = leadingCommentRanges.at(-1);
     if (headerCommentRange) {
       const comment = this.sourceFile.text.slice(headerCommentRange.pos, headerCommentRange.end);
-      this.subroutines[this.currentSubroutine.name].comment = comment;
+      this.currentSubroutine.desc = comment;
     }
 
     if (!node.body) throw new Error(`A method body must be defined for ${node.name.getText()}`);
@@ -2496,29 +2236,75 @@ export default class Compiler {
       return;
     }
 
-    this.handledActions[this.currentSubroutine.name] = [];
-    this.currentSubroutine.handles = [];
+    this.currentSubroutine.allows = { create: [], call: [] };
+    let bareAction = false;
+
+    if ([...ON_COMPLETES, 'CreateApplication'].includes(capitalizeFirstChar(this.currentSubroutine.name))) {
+      const isCreate = this.currentSubroutine.name === 'createApplication';
+      const oc = isCreate ? 'NoOp' : capitalizeFirstChar(this.currentSubroutine.name) as OnComplete;
+      const action = isCreate ? 'CREATE' : 'CALL';
+      if (this.currentSubroutine.args.length === 0) {
+        bareAction = true;
+        this.bareCallConfig[oc] = { action, method: this.currentSubroutine.name };
+      } else {
+        this.currentSubroutine.allows[action.toLowerCase() as 'call' | 'create'].push(oc);
+      }
+    }
 
     (ts.getDecorators(node) || []).forEach(
       (d) => {
-        if (!ts.isPropertyAccessExpression(d.expression)) throw Error(`Unknown decorator ${d.expression.getText()}`);
-        const decoratorClass = d.expression.expression.getText();
+        const callExpr = d.expression;
+        if (!ts.isCallExpression(callExpr)) throw Error(`Unknown decorator ${d.getText()}`);
+        const propExpr = callExpr.expression;
 
-        if (decoratorClass === 'abi') {
-          if (d.expression.name.getText() !== 'readonly') throw Error(`Unknown decorator ${d.expression.getText()}`);
-          this.currentSubroutine.readonly = true;
-          return;
+        if (!ts.isPropertyAccessExpression(propExpr)) throw Error(`Unknown decorator ${d.getText()}`);
+        const decoratorClass = propExpr.expression.getText();
+        const decoratorFunction = propExpr.name.getText();
+
+        switch (decoratorClass) {
+          case 'abi':
+            this.currentSubroutine.readonly = true;
+            break;
+          case 'allow':
+            if (!['call', 'create', 'bareCreate', 'bareCall'].includes(decoratorFunction)) throw Error(`Unknown decorator ${d.getText()}`);
+
+            if (decoratorFunction.startsWith('bare') && this.currentSubroutine.args.length > 0) throw Error('Cannot use bare decorator on method with arguments');
+
+            if (['create', 'bareCreate'].includes(decoratorFunction) && callExpr.arguments.length === 0) {
+              if (decoratorFunction.startsWith('bare')) {
+                bareAction = true;
+                if (this.bareCallConfig.NoOp) throw Error('Duplicate bare decorator for NoOp');
+                this.bareCallConfig.NoOp = { action: 'CREATE', method: this.currentSubroutine.name };
+              } else this.currentSubroutine.allows.create.push('NoOp');
+            } else {
+              const arg = callExpr.arguments[0];
+              if (arg === undefined) throw Error(`Missing OnComplete in decorator ${d.getText()}`);
+
+              if (!ts.isStringLiteral(arg)) throw Error(`Invalid OnComplete: ${arg.getText()}`);
+
+              const oc = arg.text as 'NoOp' | 'OptIn' | 'CloseOut' | 'ClearState' | 'UpdateApplication' | 'DeleteApplication';
+              if (!ON_COMPLETES.includes(oc)) throw Error(`Invalid OnComplete: ${oc}`);
+
+              if (decoratorFunction.startsWith('bare')) {
+                bareAction = true;
+                if (this.bareCallConfig[oc]) throw Error(`Duplicate bare decorator for ${oc}`);
+                const action = decoratorFunction.replace('bare', '').toUpperCase() as 'CALL' | 'CREATE';
+
+                this.bareCallConfig[oc] = { action, method: this.currentSubroutine.name };
+              } else this.currentSubroutine.allows[decoratorFunction as 'call' | 'create'].push(oc);
+            }
+            break;
+
+          default:
+            throw Error(`Unknown decorator ${d.getText()}`);
         }
-
-        if (decoratorClass !== 'handle') throw Error(`Unknown decorator ${d.expression.getText()}`);
-
-        const handledAction = d.expression.name.getText();
-        if (Object.values(this.handledActions).flat().includes(handledAction)) throw new Error(`Action ${handledAction} is already handled by another method`);
-
-        this.handledActions[this.currentSubroutine.name].push(handledAction);
-        this.currentSubroutine.handles.push(handledAction);
       },
     );
+
+    const { allows } = this.currentSubroutine;
+    if (allows.create.length + allows.call.length === 0 && bareAction === false) {
+      allows.call.push('NoOp');
+    }
 
     this.processRoutableMethod(node);
   }
@@ -2537,7 +2323,8 @@ export default class Compiler {
 
   private processReturnStatement(node: ts.ReturnStatement) {
     this.addSourceComment(node);
-    const { returnType, name } = this.currentSubroutine;
+    const { name } = this.currentSubroutine;
+    const returnType = this.currentSubroutine.returns.type;
 
     if (returnType === 'void') {
       this.pushVoid(node, 'retsub');
@@ -2559,8 +2346,7 @@ export default class Compiler {
 
         if (this.lastType === 'uint64') this.pushVoid(node.expression!, 'itob');
 
-        this.pushVoid(node.expression!, `byte 0x${'FF'.repeat(returnBitWidth / 8)}`);
-        this.pushVoid(node.expression!, 'b&');
+        this.fixBitWidth(node, returnBitWidth);
 
         // eslint-disable-next-line no-console
         if (!this.disableWarnings) console.warn(`WARNING: Converting ${name} return value from ${this.lastType} to ${returnType}`);
@@ -2572,8 +2358,7 @@ export default class Compiler {
       || (returnType.match(/ufixed\d+x\d+$/))
     ) {
       const returnBitWidth = parseInt(returnType.match(/\d+/)![0], 10);
-      this.pushVoid(node.expression!, `byte 0x${'FF'.repeat(returnBitWidth / 8)}`);
-      this.pushVoid(node.expression!, 'b&');
+      this.fixBitWidth(node, returnBitWidth);
     }
 
     if (isAbiMethod) {
@@ -2586,17 +2371,21 @@ export default class Compiler {
     this.typeHint = undefined;
   }
 
-  private fixBitWidth(node: ts.Node, desiredWidth: number, warn: boolean = true) {
-    const lastBitWidth = parseInt(this.lastType.match(/\d+/)![0], 10);
-
-    // eslint-disable-next-line no-console
-    if (lastBitWidth > desiredWidth && warn && !this.disableWarnings) console.warn(`WARNING: Converting value from ${this.lastType} to uint${desiredWidth} may result in loss of precision`);
-
-    if (lastBitWidth < desiredWidth) {
-      this.pushLines(node, `byte 0x${'FF'.repeat(desiredWidth / 8)}`, 'b&');
-    } else {
-      this.pushVoid(node, `extract ${lastBitWidth / 8 - desiredWidth / 8} 0`);
-    }
+  private fixBitWidth(node: ts.Node, desiredWidth: number) {
+    this.pushLines(
+      node,
+      `byte 0x${'FF'.repeat(desiredWidth / 8)}`,
+      'b&',
+      'dupn 2',
+      `byte 0x${'FF'.repeat(desiredWidth / 8)}`,
+      'b<=',
+      'assert',
+      'len',
+      `int ${desiredWidth / 8}`,
+      '-',
+      `int ${desiredWidth / 8}`,
+      'extract3',
+    );
   }
 
   private getStackTypeFromNode(node: ts.Node) {
@@ -2779,11 +2568,15 @@ export default class Compiler {
       return;
     }
 
-    if ((type.match(/uint\d+$/) || type.match(/ufixed\d+x\d+$/)) && type !== this.lastType) {
+    if (
+      !ts.isNumericLiteral(node.expression)
+      && (type.match(/uint\d+$/) || type.match(/ufixed\d+x\d+$/))
+      && type !== this.lastType
+    ) {
       const typeBitWidth = parseInt(type.replace('uint', ''), 10);
 
       if (this.lastType === 'uint64') this.pushVoid(node, 'itob');
-      this.fixBitWidth(node, typeBitWidth, !ts.isNumericLiteral(node.expression));
+      this.fixBitWidth(node, typeBitWidth);
     }
 
     this.typeHint = undefined;
@@ -2906,7 +2699,10 @@ export default class Compiler {
           const accessors = accessChain.map((e, i) => {
             if (ts.isNumericLiteral(e.argumentExpression)) return e.argumentExpression;
 
-            this.processNode(e.argumentExpression);
+            if (ts.isNumericLiteral(e.argumentExpression)) {
+              this.push(e.argumentExpression, `int ${e.argumentExpression.getText()}`, StackType.uint64);
+            } else this.processNode(e.argumentExpression);
+
             const accName = `accessor//${i}//${name}`;
             this.pushVoid(node.initializer!, `frame_bury ${this.frameIndex} // accessor: ${accName}`);
 
@@ -3188,7 +2984,9 @@ export default class Compiler {
       this.pushVoid(node, `PENDING_DUPN: ${methodName}`);
       new Array(...node.arguments).reverse().forEach((a) => this.processNode(a));
       this.lastType = preArgsType;
-      this.push(node.expression, `callsub ${methodName}`, this.subroutines[methodName].returnType);
+      const subroutine = this.subroutines.find((s) => s.name === methodName);
+      if (!subroutine) throw new Error(`Unknown subroutine ${methodName}`);
+      this.push(node.expression, `callsub ${methodName}`, subroutine.returns.type);
     } else if (
       ts.isPropertyAccessExpression(node.expression.expression)
       && Object.keys(this.storageProps).includes(node.expression.expression?.name?.getText())
@@ -3345,7 +3143,7 @@ export default class Compiler {
   }
 
   private processLiteral(node: ts.StringLiteral | ts.NumericLiteral) {
-    if (this.typeHint?.startsWith('ufixed')) {
+    if (this.typeHint?.match(/ufixed\d+x\d+$/)) {
       const match = this.typeHint.match(/\d+/g)!;
       const n = parseInt(match[0], 10);
       const m = parseInt(match[1], 10);
@@ -3358,10 +3156,17 @@ export default class Compiler {
       const fixedValue = Math.round(value * 10 ** m);
 
       this.push(node, `byte 0x${fixedValue.toString(16).padStart(n / 2, '0')}`, this.typeHint);
-      return;
-    }
+    } else if (this.typeHint?.match(/uint\d+$/) && this.typeHint !== 'uint64') {
+      const width = Number(this.typeHint.match(/\d+/)![0]);
+      const value = Number(node.getText());
+      const maxValue = 2 ** width - 1;
 
-    if (node.kind === ts.SyntaxKind.StringLiteral) {
+      if (value > maxValue) {
+        throw Error(`Value ${value} is too large for ${this.typeHint}. Max value is ${maxValue}`);
+      }
+
+      this.push(node, `byte 0x${value.toString(16).padStart(width / 4, '0')}`, this.typeHint);
+    } else if (node.kind === ts.SyntaxKind.StringLiteral) {
       this.push(node, `byte "${node.text}"`, StackType.bytes);
     } else {
       this.push(node, `int ${node.getText()}`, StackType.uint64);
@@ -3532,74 +3337,14 @@ export default class Compiler {
   }
 
   private processRoutableMethod(fn: ts.MethodDeclaration) {
-    let allowCreate: boolean = false;
-    let isClearState: boolean = false;
-    const allowedOnCompletes: string[] = [];
-
-    this.currentSubroutine.handles?.forEach((d, i) => {
-      switch (d) {
-        case 'createApplication':
-          allowCreate = true;
-          break;
-        case 'noOp':
-          allowedOnCompletes.push('NoOp');
-          break;
-        case 'optIn':
-          allowedOnCompletes.push('OptIn');
-          break;
-        case 'closeOut':
-          allowedOnCompletes.push('CloseOut');
-          break;
-        case 'updateApplication':
-          allowedOnCompletes.push('UpdateApplication');
-          break;
-        case 'deleteApplication':
-          allowedOnCompletes.push('DeleteApplication');
-          break;
-        case 'clearState':
-          isClearState = true;
-          break;
-        default:
-          throw new Error(`Unknown decorator: ${d}`);
-      }
-    });
-
-    if (isClearState) {
+    if (this.currentSubroutine.allows.call.includes('ClearState') || this.currentSubroutine.name === 'clearState') {
       this.processClearState(fn);
       return;
     }
 
+    this.pushVoid(fn, `abi_route_${this.currentSubroutine.name}:`);
+
     const argCount = fn.parameters.length;
-
-    const bareMethod: boolean = argCount === 0
-      && !!this.currentSubroutine.handles?.length
-      && this.currentSubroutine.returnType === 'void';
-
-    // bare method
-    if (bareMethod) {
-      allowedOnCompletes.forEach((oc, i) => {
-        this.bareOnCompletes.push(oc);
-        this.pushVoid(fn, `bare_route_${oc}:`);
-      });
-
-      if (allowCreate) {
-        this.bareCreate = true;
-        this.pushVoid(fn, 'bare_route_create:');
-      }
-    } else this.pushVoid(fn, `abi_route_${this.currentSubroutine.name}:`);
-
-    if (allowedOnCompletes.length === 0) allowedOnCompletes.push('NoOp');
-
-    allowedOnCompletes.forEach((oc, i) => {
-      this.pushLines(fn, 'txn OnCompletion', `int ${oc}`, '==');
-      if (i > 0) this.pushVoid(fn, '||');
-    });
-
-    // if not a create, dont allow it
-    this.pushLines(fn, 'txn ApplicationID', 'int 0');
-    this.pushVoid(fn, allowCreate ? '==' : '!=');
-    if (allowedOnCompletes.length > 0) this.pushVoid(fn, '&&');
-    this.pushVoid(fn, 'assert');
 
     const args: {name: string, type: string, desc: string}[] = [];
     this.pushVoid(fn, `PENDING_DUPN: ${this.currentSubroutine.name}`);
@@ -3629,11 +3374,13 @@ export default class Compiler {
       args.push({ name: p.name.getText(), type: this.getABIType(abiType).replace('bytes', 'byte[]'), desc: '' });
     });
 
-    const returnType = this.currentSubroutine.returnType
+    const returnType = this.currentSubroutine.returns.type
       .replace(/asset|application/, 'uint64')
       .replace('account', 'address');
 
-    if (!bareMethod) {
+    // Only add an ABI method if it allows any non-bare OnComplete calls
+    const currentAllows = Object.values(this.currentSubroutine.allows).flat();
+    if (currentAllows.length > 0) {
       this.abi.methods.push({
         name: this.currentSubroutine.name,
         readonly: this.currentSubroutine.readonly || undefined,
@@ -3642,7 +3389,6 @@ export default class Compiler {
         returns: { type: returnType, desc: '' },
       });
     }
-
     this.pushVoid(fn, `callsub ${this.currentSubroutine.name}`);
     this.pushVoid(fn, 'int 1');
     this.pushVoid(fn, 'return');
@@ -4060,11 +3806,16 @@ export default class Compiler {
     }
 
     const hints: {[signature: string]: {'call_config': {[action: string]: string}}} = {};
-    const bareCallConfig: {[action: string]: string} = {};
 
     const appSpec = {
       hints,
-      bare_call_config: bareCallConfig,
+      bare_call_config: {
+        no_op: this.bareCallConfig.NoOp?.action || 'NEVER',
+        opt_in: this.bareCallConfig.OptIn?.action || 'NEVER',
+        close_out: this.bareCallConfig.CloseOut?.action || 'NEVER',
+        update_application: this.bareCallConfig.UpdateApplication?.action || 'NEVER',
+        delete_application: this.bareCallConfig.DeleteApplication?.action || 'NEVER',
+      },
       schema: {
         local: { declared: localDeclared, reserved: {} },
         global: { declared: globalDeclared, reserved: {} },
@@ -4081,24 +3832,20 @@ export default class Compiler {
         call_config: {},
       };
 
-      if (this.handledActions[m.name].length === 0) {
-        hints[signature].call_config.no_op = 'CALL';
-      } else {
-        this.handledActions[m.name].forEach((a) => {
-          if (a === 'createApplication') hints[signature].call_config.no_op = 'CREATE';
-          else hints[signature].call_config[a] = 'CALL';
-        });
-      }
-    });
+      const subroutine = this.subroutines.find((s) => s.name === m.name)!;
 
-    this.bareOnCompletes.forEach((oc) => {
-      if (oc === 'DeleteApplication') bareCallConfig.delete_application = 'CALL';
-      if (oc === 'UpdateApplication') bareCallConfig.update_application = 'CALL';
-      if (oc === 'CloseOut') bareCallConfig.close_out = 'CALL';
-      if (oc === 'OptIn') bareCallConfig.opt_in = 'CALL';
-    });
+      subroutine.allows.create.forEach((oc) => {
+        if (oc === 'ClearState') return;
+        const snakeOC = oc.split(/\.?(?=[A-Z])/).join('_').toLowerCase();
+        hints[signature].call_config[snakeOC] = 'CREATE';
+      });
 
-    if (this.bareCreate || !Object.values(this.handledActions).flat().includes('createApplication')) bareCallConfig.no_op = 'CREATE';
+      subroutine.allows.call.forEach((oc) => {
+        if (oc === 'ClearState') return;
+        const snakeOC = oc.split(/\.?(?=[A-Z])/).join('_').toLowerCase();
+        hints[signature].call_config[snakeOC] = 'CALL';
+      });
+    });
 
     return appSpec;
   }
@@ -4119,7 +3866,6 @@ export default class Compiler {
     // if no clear state, just default approve
     if (!this.clearStateCompiled) {
       output.push('int 1');
-      output.push('return');
     }
     this.generatedClearTeal = output.join('\n');
 
@@ -4131,6 +3877,7 @@ export default class Compiler {
     const output: string[] = [];
     let comments: string[] = [];
 
+    let hitFirstLabel = false;
     let lastIsLabel: boolean = false;
 
     teal.forEach((t, i) => {
@@ -4143,7 +3890,9 @@ export default class Compiler {
 
       if ((!lastIsLabel && comments.length !== 0) || isLabel) output.push('');
 
-      if (isLabel || t.startsWith('#')) {
+      hitFirstLabel = hitFirstLabel || isLabel;
+
+      if (isLabel || t.startsWith('#') || !hitFirstLabel) {
         comments.forEach((c) => output.push(c));
         comments = [];
         output.push(t);

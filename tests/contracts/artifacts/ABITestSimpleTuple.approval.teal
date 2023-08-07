@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_simpleTuple:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub simpleTuple
 	int 1
@@ -26,16 +29,12 @@ simpleTuple:
 	int 11
 	itob
 	callsub process_static_tuple_element
-	int 22
-	itob
-	extract 6 0
+	byte 0x0016
 	callsub process_static_tuple_element
 	int 33
 	itob
 	callsub process_static_tuple_element
-	int 44
-	itob
-	extract 6 0
+	byte 0x002c
 	callsub process_static_tuple_element
 	pop // pop head offset
 	concat // concat head and tail
@@ -54,27 +53,31 @@ simpleTuple:
 	extract3
 	byte 0xFFFF
 	b&
+	dupn 2
+	byte 0xFFFF
+	b<=
+	assert
+	len
+	int 2
+	-
+	int 2
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "simpleTuple()uint16"
 	txna ApplicationArgs 0
 	match abi_route_simpleTuple

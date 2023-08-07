@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_arrayPush:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub arrayPush
 	int 1
@@ -20,21 +23,15 @@ arrayPush:
 
 	// tests/contracts/abi.algo.ts:402
 	// a: uint<16>[] = [1, 2]
-	int 1
-	itob
-	extract 6 0
-	int 2
-	itob
-	extract 6 0
+	byte 0x0001
+	byte 0x0002
 	concat
 	frame_bury -1 // a: uint16[]
 
 	// tests/contracts/abi.algo.ts:404
 	// a.push(3 as uint<16>)
 	frame_dig -1 // a: uint16[]
-	int 3
-	itob
-	extract 6 0
+	byte 0x0003
 	concat
 	frame_bury -1 // a: uint16[]
 
@@ -55,21 +52,16 @@ arrayPush:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "arrayPush()uint16[]"
 	txna ApplicationArgs 0
 	match abi_route_arrayPush

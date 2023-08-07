@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_arrayRef:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub arrayRef
 	int 1
@@ -20,16 +23,10 @@ arrayRef:
 
 	// tests/contracts/abi.algo.ts:734
 	// a: uint<8>[] = [1, 2, 3]
-	int 1
-	itob
-	extract 7 0
-	int 2
-	itob
-	extract 7 0
+	byte 0x01
+	byte 0x02
 	concat
-	int 3
-	itob
-	extract 7 0
+	byte 0x03
 	concat
 	frame_bury -1 // a: uint8[]
 
@@ -38,15 +35,11 @@ arrayRef:
 	frame_dig -1 // a: uint8[]
 	store 0 // full array
 	int 0 // initial offset
-	int 1
-	int 1
-	* // acc * typeLength
+	int 1 // acc * typeLength
 	+
 	load 0 // full array
 	swap
-	int 4
-	itob
-	extract 7 0
+	byte 0x04
 	replace3
 	frame_bury -1 // b: uint8[]
 
@@ -65,21 +58,16 @@ arrayRef:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "arrayRef()uint8[]"
 	txna ApplicationArgs 0
 	match abi_route_arrayRef

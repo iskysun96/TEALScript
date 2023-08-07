@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_startUpload:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	dupn 3
 	txn GroupIndex
@@ -47,15 +50,57 @@ startUpload:
 	// metadata: Metadata = {
 	frame_dig -5 // startBox: uint64
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	frame_dig -6 // endBox: uint64
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	concat
-	int 0
-	itob
-	extract 7 0
+	byte 0x00
+	byte 0xFF
+	b&
+	dupn 2
+	byte 0xFF
+	b<=
+	assert
+	len
+	int 1
+	-
+	int 1
+	extract3
 	concat
 	frame_dig -3 // endBoxSize: uint64
 	itob
+	byte 0xFFFFFFFFFFFFFFFF
+	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 8
+	-
+	int 8
+	extract3
 	concat
 	frame_bury -7 // metadata: Metadata
 
@@ -127,14 +172,6 @@ startUpload:
 	retsub
 
 abi_route_upload:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	txna ApplicationArgs 4
 	extract 2 0
@@ -169,9 +206,7 @@ upload:
 	swap
 	int 1
 	extract3
-	int 0
-	itob
-	extract 7 0
+	byte 0x00
 	b==
 	assert
 
@@ -271,14 +306,6 @@ if0_end:
 	retsub
 
 abi_route_setStatus:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -311,16 +338,12 @@ setStatus:
 	// examples/big_box/big_box.algo.ts:99
 	// assert(status === READY || status === IMMUTABLE || status === IN_PROGRESS)
 	frame_dig -2 // status: uint8
-	int 1
-	itob
-	extract 7 0
+	byte 0x01
 	b==
 	dup
 	bnz skip_or0
 	frame_dig -2 // status: uint8
-	int 2
-	itob
-	extract 7 0
+	byte 0x02
 	b==
 	||
 
@@ -328,9 +351,7 @@ skip_or0:
 	dup
 	bnz skip_or1
 	frame_dig -2 // status: uint8
-	int 0
-	itob
-	extract 7 0
+	byte 0x00
 	b==
 	||
 
@@ -340,9 +361,7 @@ skip_or1:
 	// examples/big_box/big_box.algo.ts:100
 	// assert(currentStatus !== IMMUTABLE)
 	frame_dig -3 // currentStatus: uint8
-	int 2
-	itob
-	extract 7 0
+	byte 0x02
 	b!=
 	assert
 
@@ -364,21 +383,16 @@ skip_or1:
 	box_put
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "startUpload(string,uint64,uint64,pay)void"
 	method "upload(string,uint64,uint64,byte[])void"
 	method "setStatus(string,uint8)void"

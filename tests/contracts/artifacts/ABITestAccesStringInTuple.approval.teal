@@ -1,15 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_accesStringInTuple:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	callsub accesStringInTuple
 	int 1
@@ -23,13 +26,9 @@ accesStringInTuple:
 	byte 0x // initial head
 	byte 0x // initial tail
 	byte 0x0008 // initial head offset
-	int 1
-	itob
-	extract 6 0
+	byte 0x0001
 	callsub process_static_tuple_element
-	int 2
-	itob
-	extract 7 0
+	byte 0x02
 	dup
 	len
 	itob
@@ -45,9 +44,7 @@ accesStringInTuple:
 	swap
 	concat
 	callsub process_dynamic_tuple_element
-	int 3
-	itob
-	extract 7 0
+	byte 0x03
 	dup
 	len
 	itob
@@ -117,21 +114,16 @@ accesStringInTuple:
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "accesStringInTuple()string"
 	txna ApplicationArgs 0
 	match abi_route_accesStringInTuple

@@ -1,92 +1,81 @@
-## Handle Decorators
-TEALScript provides some decorators to allow for the handling of specific actions (creation and various on-completes) via {@link handle}. If the method has no arguments, the method will be a bare method for the given action(s). Otherwise, the decorated method will be the ONLY method that can handle the given action.
+## Create, Update, and Delete
 
-## Create
+By default, Algorand applications can be created, updated, and deleted. In TEALScript, applications can be created by default, but cannot be updated to deleted. The default {@link Contract.createApplication} method won't run any logic, but rather simply create the application on the chain. 
 
-By default, TEALScript contracts can be created a bare method call with the `NoOp` on complete. To add logic to the application's creation, you can use the {@link handle.createApplication handle.createApplication} decorator. If no arguments are provided to the method, the method will be the bare create logic.
+### Modifying create logic
 
-### Examples
-#### Bare Create
-```ts
-@handle.createApplication
-bareCreateExample(): void {
-  log("This app has been created!")
+To modify the logic executed upon applicaiton creation (for example, to set default storage values) your contract class must implement a method to override {@link Contract.createApplication}.
+
+#### Example
+```typescript
+class Counter extends Contract {
+  counter = new GlobalStateKey<number>();
+
+  createApplication(startingNumber: number) {
+    this.counter.set(startingNumber)
+  }
 }
 ```
 
-#### Non-Bare Create
-```ts
-@handle.createApplication
-nonBareCreateExample(name: string): void {
-  log("This app has been created by " + name + "!")
+### Implementing a updateApplication Method
+
+By defualt, TEALScript contracts cannot be updated. To allow a contract to be updated, a method that overrides {@link Contract.updateApplication} must be implemented.
+
+#### Example
+```typescript
+class Counter extends Contract {
+  counter = new GlobalStateKey<number>();
+
+  createApplication(startingNumber: number) {
+    this.counter.set(startingNumber)
+  }
+
+  updateApplication() {
+    assert(this.txn.sender === this.app.creator)
+  }
 }
 ```
 
-## Update
+### Implementing a deleteApplication Method
 
-By default, TEALScript applications are immutable and cannot be udpated. To support updates, a method with the {@link handle.updateApplication handle.updateApplication} decorator must be defined. If the method has no arguments, it will be the bare update logic.
+By defualt, TEALScript contracts cannot be deleted. To allow a contract to be deleted, a method that overrides {@link Contract.deleteApplication} must be implemented.
 
-### Examples
-#### Bare Update
-```ts
-@handle.updateApplication
-bareUpdateExample(): void {
-  assert(this.txn.sender === this.app.creator)
-  log("This app has been updated!")
+#### Example
+```typescript
+class Counter extends Contract {
+  counter = new GlobalStateKey<number>();
+
+  createApplication(startingNumber: number) {
+    this.counter.set(startingNumber)
+  }
+
+  deleteApplication() {
+    assert(this.txn.sender === this.app.creator)
+  }
 }
 ```
 
-#### Non-Bare Update
-```ts
-@handle.updateApplication
-nonBareUpdateExample(name: string): void {
-  assert(this.txn.sender === this.app.creator)
-  log("This app has been created by " + name + "!")
-}
-```
+## OptIn, CloseOut, and ClearState
 
-## Delete
+If your contract uses local state, you will need to override the {@link Contract.optInToApplication} method and override {@link Contract.closeOutOfApplication} and/or {@link Contract.clearState} as desired. To learn more about contract state, see {@page storage.md}
 
-By default, TEALScript applications are immutable and cannot be deleted. To support deletion, a method with the {@link handle.deleteApplication handle.deleteApplication} decorator must be defined. If the method has no arguments, it will be the bare delete logic.
+## Advanced OnComplete Control
 
-### Examples
+To have more granular control on what OnComplete a specific method allows, use the {@link allow.call} or {@link allow.create} decorator to control allowed OnCompletes when calling or creating the application. 
 
-#### Bare Delete
-```ts
-@handle.deleteApplication
-bareDeleteExample(): void {
-  assert(this.txn.sender === this.app.creator)
-  log("This app has been deleted!")
-}
-```
+### Example
 
-#### Non-Bare Delete
-```ts
-@handle.deleteApplication
-nonBareDeleteExample(name: string): void {
-  assert(this.txn.sender === this.app.creator)
-  log("This app has been deleted by " + name + "!")
-}
-```
+```typescript
+class Counter extends Contract {
+  counter = new LocalStateKey<number>();
 
-## Opt-In
-
-By default, TEALScript applications do not allow opt ins. To support opting in for {@link types/storage.md local storage}, a method with the {@link handle.optIn handle.optIn} decorator must be defined. If the method has no arguments, it will be the bare opt-in logic.
-
-### Examples
-
-#### Bare Opt-In
-```ts
-@handle.optIn
-bareDeleteExample(): void {
-  log("User has opted in!")
-}
-```
-
-#### Non-Bare Delete
-```ts
-@handle.optIn
-nonBareDeleteExample(name: string): void {
-  log(name + ' has opted in!')
+  // This method will increment a counter in local state
+  @allow.create('OptIn') // Allow an OptIn create so the creators counter can be set when creating the app
+  @allow.call('OptIn')   // Allow anyone to OptIn to the contract so they can use local state
+  @allow.call('NoOp')    // Allow anyone to call the app again with a NoOp call (can only OptIn once)
+  useLocalState() {
+    if (!this.counter.exists(this.txn.sender)) this.counter.set(this.txn.sender, 1)
+    else this.counter.set(this.txn.sender, this.counter.get(this.txn.sender) + 1)
+  }
 }
 ```

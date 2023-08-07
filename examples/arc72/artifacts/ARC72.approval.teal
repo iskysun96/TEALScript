@@ -1,16 +1,18 @@
-#pragma version 8
-	b main
+#pragma version 9
+
+txn ApplicationID
+int 0
+>
+int 6
+*
+txn OnCompletion
++
+switch create_NoOp NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED NOT_IMPLEMENTED call_NoOp
+
+NOT_IMPLEMENTED:
+	err
 
 abi_route_arc72_ownerOf:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 1
 	callsub arc72_ownerOf
@@ -43,15 +45,6 @@ arc72_ownerOf:
 	retsub
 
 abi_route_arc72_tokenURI:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 1
 	callsub arc72_tokenURI
@@ -105,14 +98,6 @@ transferTo:
 	retsub
 
 abi_route_arc72_transferFrom:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x; dup
 	txna ApplicationArgs 3
 	txna ApplicationArgs 2
@@ -187,15 +172,6 @@ if0_end:
 	retsub
 
 abi_route_arc72_approve:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 2
 	txna ApplicationArgs 1
@@ -225,14 +201,6 @@ arc72_approve:
 	retsub
 
 abi_route_arc72_setApprovalForAll:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x
 	txna ApplicationArgs 2
 	int 0
@@ -266,12 +234,6 @@ arc72_setApprovalForAll:
 	box_del
 	pop
 	byte ""
-	dup
-	len
-	itob
-	extract 6 2
-	swap
-	concat
 	box_put
 	b if1_end
 
@@ -294,14 +256,6 @@ if1_end:
 	retsub
 
 abi_route_mint:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
 	byte 0x; dup
 	txna ApplicationArgs 1
 	callsub mint
@@ -343,24 +297,12 @@ mint:
 	// this.index.set(index + (1 as uint<256>))
 	byte "index"
 	frame_dig -2 // index: uint256
-	int 1
-	itob
-	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-	b&
+	byte 0x0000000000000000000000000000000000000000000000000000000000000001
 	b+
 	app_global_put
 	retsub
 
 abi_route_arc72_totalSupply:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	callsub arc72_totalSupply
 	int 1
@@ -375,6 +317,15 @@ arc72_totalSupply:
 	app_global_get
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
@@ -382,15 +333,6 @@ arc72_totalSupply:
 	retsub
 
 abi_route_arc72_tokenByIndex:
-	txn OnCompletion
-	int NoOp
-	==
-	txn ApplicationID
-	int 0
-	!=
-	&&
-	assert
-
 	// no dupn needed
 	txna ApplicationArgs 1
 	callsub arc72_tokenByIndex
@@ -405,27 +347,31 @@ arc72_tokenByIndex:
 	frame_dig -1 // index: uint256
 	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 	b&
+	dupn 2
+	byte 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+	b<=
+	assert
+	len
+	int 32
+	-
+	int 32
+	extract3
 	byte 0x151f7c75
 	swap
 	concat
 	log
 	retsub
 
-main:
-	txn NumAppArgs
-	bnz route_abi
-
-	// default createApplication
-	txn ApplicationID
-	int 0
-	==
-	txn OnCompletion
-	int NoOp
-	==
-	&&
+abi_route_defaultTEALScriptCreate:
+	int 1
 	return
 
-route_abi:
+create_NoOp:
+	txn NumAppArgs
+	switch abi_route_defaultTEALScriptCreate
+	err
+
+call_NoOp:
 	method "arc72_ownerOf(uint256)address"
 	method "arc72_tokenURI(uint256)byte[256]"
 	method "arc72_transferFrom(address,address,uint256)void"
